@@ -29,32 +29,59 @@ uvx agent-strace replay
 
 ## Quick start
 
-### Option 1: MCP proxy
+### Option 1: Claude Code hooks (captures everything)
 
-Wrap any MCP server. Every message between agent and server is captured.
+Trace every tool call Claude Code makes — Bash, Edit, Write, Read, Agent, Grep, Glob, WebFetch, WebSearch, and all MCP tools.
+
+```bash
+# Generate the hooks config
+agent-strace setup
+
+# Prints JSON to add to .claude/settings.json (or ~/.claude/settings.json with --global)
+```
+
+Or add the hooks manually to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "agent-strace hook pre-tool" }] }],
+    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "agent-strace hook post-tool" }] }],
+    "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "agent-strace hook post-tool-failure" }] }],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "agent-strace hook session-start" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "agent-strace hook session-end" }] }]
+  }
+}
+```
+
+Then use Claude Code normally. Every tool call is traced.
+
+```bash
+agent-strace list     # list sessions
+agent-strace replay   # replay the latest
+agent-strace stats    # tool call frequency and timing
+```
+
+### Option 2: MCP proxy (any MCP client)
+
+Wrap any MCP server. Every JSON-RPC message between agent and server is captured.
 
 ```bash
 # Record a session
 agent-strace record -- npx -y @modelcontextprotocol/server-filesystem /tmp
 
-# List recorded sessions
-agent-strace list
-
-# Replay the last session
-agent-strace replay
-
-# Replay a specific session (prefix match works)
+# Replay
 agent-strace replay a84664
 ```
 
-### Option 2: Python decorator
+### Option 3: Python decorator
 
 Wrap your tool functions. No MCP required.
 
 ```python
 from agent_trace import trace_tool, trace_llm_call, start_session, end_session, log_decision
 
-start_session(name="my-agent")
+start_session(name="my-agent")  # add redact=True to strip secrets
 
 @trace_tool
 def search_codebase(query: str) -> str:
@@ -81,13 +108,44 @@ print(f"Replay with: agent-strace replay {meta.session_id}")
 ## CLI commands
 
 ```
-agent-strace record -- <command>    Record an MCP server session
-agent-strace replay [session-id]    Replay a session (default: latest)
-agent-strace list                   List all sessions
-agent-strace stats [session-id]     Show tool call frequency and timing
-agent-strace inspect <session-id>   Dump full session as JSON
-agent-strace export <session-id>    Export as JSON, CSV, or NDJSON
+agent-strace setup [--redact] [--global]   Generate Claude Code hooks config
+agent-strace hook <event>                  Handle a Claude Code hook event (internal)
+agent-strace record -- <command>           Record an MCP stdio server session
+agent-strace record-http <url> [--port N]  Record an MCP HTTP/SSE server session
+agent-strace replay [session-id]           Replay a session (default: latest)
+agent-strace list                          List all sessions
+agent-strace stats [session-id]            Show tool call frequency and timing
+agent-strace inspect <session-id>          Dump full session as JSON
+agent-strace export <session-id>           Export as JSON, CSV, or NDJSON
 ```
+
+### Secret redaction
+
+Pass `--redact` to strip API keys, tokens, and credentials from traces before they hit disk.
+
+```bash
+# Stdio proxy with redaction
+agent-strace record --redact -- npx -y @modelcontextprotocol/server-filesystem /tmp
+
+# HTTP proxy with redaction
+agent-strace record-http https://mcp.example.com --redact
+```
+
+Detected patterns: OpenAI (`sk-*`), GitHub (`ghp_*`, `github_pat_*`), AWS (`AKIA*`), Anthropic (`sk-ant-*`), Slack (`xox*`), JWTs, Bearer tokens, connection strings (`postgres://`, `mysql://`), and any value under keys like `password`, `secret`, `token`, `api_key`, `authorization`.
+
+### HTTP/SSE proxy
+
+For MCP servers that use HTTP transport instead of stdio:
+
+```bash
+# Proxy a remote MCP server
+agent-strace record-http https://mcp.example.com --port 3100
+
+# Your agent connects to http://127.0.0.1:3100 instead of the remote server
+# All JSON-RPC messages are captured, tool call latency is measured
+```
+
+The proxy forwards POST `/message` and GET `/sse` to the remote server, capturing every JSON-RPC message in both directions.
 
 ### Replay output
 
@@ -210,30 +268,16 @@ Events link to each other. A `tool_result` has a `parent_id` pointing to its `to
 
 ## Use with Claude Code, Cursor, Windsurf
 
-agent-strace works with any tool that launches MCP servers. The idea is simple: instead of launching the MCP server directly, launch it through `agent-strace record`. The agent and server don't know the proxy exists.
+### Claude Code (hooks — captures all tool calls)
 
-### Claude Code
+Claude Code's [hooks system](https://code.claude.com/docs/en/hooks) fires events for every tool call, not just MCP. This is the recommended integration.
 
 ```bash
-# Instead of:
-claude mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /tmp
-
-# Use:
-claude mcp add filesystem -- agent-strace record --name filesystem -- npx -y @modelcontextprotocol/server-filesystem /tmp
+agent-strace setup        # prints the hooks config JSON
+agent-strace setup --redact --global  # with redaction, for all projects
 ```
 
-Or edit `.claude/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "agent-strace",
-      "args": ["record", "--name", "filesystem", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    }
-  }
-}
-```
+Add the output to `.claude/settings.json` (per-project) or `~/.claude/settings.json` (global). See [examples/claude_code_config.md](examples/claude_code_config.md) for the full config and a table of what gets captured.
 
 ### Cursor
 
@@ -278,15 +322,40 @@ See the [examples/](examples/) directory for full config files.
 
 ## How it works
 
-### MCP proxy mode
+### Claude Code hooks
 
 ```
-Agent ←→ agent-strace proxy ←→ MCP Server
+Claude Code agentic loop
+  ├── PreToolUse         → agent-strace hook pre-tool
+  ├── PostToolUse        → agent-strace hook post-tool
+  ├── PostToolUseFailure → agent-strace hook post-tool-failure
+  ├── SessionStart       → agent-strace hook session-start
+  └── SessionEnd         → agent-strace hook session-end
+                               ↓
+                         .agent-traces/
+```
+
+Claude Code fires hook events for every tool call in its agentic loop. agent-strace registers as a hook handler, receives JSON on stdin with the tool name, input, and output, and writes trace events. This captures all built-in tools (Bash, Edit, Write, Read, Agent, Grep, Glob, WebFetch, WebSearch) and all MCP tools. Session state is tracked via `.agent-traces/.active-session` so separate hook processes can correlate PreToolUse with PostToolUse for latency measurement.
+
+### MCP stdio proxy
+
+```
+Agent ←→ agent-strace proxy ←→ MCP Server (stdio)
               ↓
          .agent-traces/
 ```
 
-The proxy reads JSON-RPC messages (Content-Length framed, like LSP), classifies each message as a tool call, result, error, or notification, and writes a trace event. The message is forwarded unchanged. The agent and server don't know the proxy exists.
+The proxy reads JSON-RPC messages (Content-Length framed or newline-delimited), classifies each message as a tool call, result, error, or notification, and writes a trace event. The message is forwarded unchanged. The agent and server don't know the proxy exists.
+
+### MCP HTTP/SSE proxy
+
+```
+Agent ←→ agent-strace proxy (localhost:3100) ←→ Remote MCP Server (HTTPS)
+              ↓
+         .agent-traces/
+```
+
+Same idea, different transport. The proxy listens on a local port, forwards POST and SSE requests to the remote server, and captures every JSON-RPC message in both directions. Tool call latency is measured from request to response.
 
 ### Decorator mode
 
@@ -298,6 +367,10 @@ def my_function(x):
 
 The decorator wraps the function call. It logs a `tool_call` event before execution and a `tool_result` event after. If the function raises, it logs an `error` event. Timing is captured automatically.
 
+### Secret redaction
+
+When `--redact` is enabled (or `redact=True` in the decorator API), every trace event is passed through a redaction filter before being written to disk. The filter checks both key names (e.g., `password`, `api_key`) and value patterns (e.g., `sk-*`, `ghp_*`, JWTs). Redacted values are replaced with `[REDACTED]`. The original data is never stored.
+
 ## Project structure
 
 ```
@@ -305,7 +378,10 @@ src/agent_trace/
   __init__.py       # version
   models.py         # TraceEvent, SessionMeta, EventType
   store.py          # NDJSON file storage
+  hooks.py          # Claude Code hooks integration
   proxy.py          # MCP stdio proxy
+  http_proxy.py     # MCP HTTP/SSE proxy
+  redact.py         # secret redaction
   replay.py         # terminal replay and display
   decorator.py      # @trace_tool, @trace_llm_call, log_decision
   cli.py            # CLI entry point

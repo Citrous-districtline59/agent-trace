@@ -1,7 +1,10 @@
 """CLI entry point.
 
 Usage:
-    agent-strace record -- <server-command> [args...]
+    agent-strace record [--redact] -- <server-command> [args...]
+    agent-strace record-http [--redact] --url <remote-url> [--port <local-port>]
+    agent-strace setup [--redact] [--global]
+    agent-strace hook <event>
     agent-strace replay [session-id]
     agent-strace list
     agent-strace inspect <session-id>
@@ -17,6 +20,8 @@ import sys
 import time
 
 from . import __version__
+from .hooks import hook_main
+from .http_proxy import HTTPProxyServer
 from .models import EventType, SessionMeta, TraceEvent
 from .proxy import MCPProxy
 from .replay import format_event, format_summary, list_sessions, replay_session
@@ -53,6 +58,7 @@ def cmd_record(args: argparse.Namespace) -> int:
         store=store,
         session_meta=meta,
         on_event=on_event,
+        redact=args.redact,
     )
 
     returncode = proxy.run()
@@ -67,6 +73,47 @@ def cmd_record(args: argparse.Namespace) -> int:
         )
 
     return returncode
+
+
+def cmd_record_http(args: argparse.Namespace) -> int:
+    """Record a remote MCP server session over HTTP/SSE."""
+    store = TraceStore(args.trace_dir)
+
+    meta = SessionMeta(
+        agent_name=args.name or "",
+        command=f"http-proxy -> {args.url}",
+    )
+    store.create_session(meta)
+
+    if not args.quiet:
+        sys.stderr.write(
+            f"agent-strace: recording HTTP session {meta.session_id}\n"
+            f"agent-strace: proxying http://127.0.0.1:{args.port} -> {args.url}\n"
+        )
+
+    on_event = _print_live_event if args.verbose else None
+
+    proxy = HTTPProxyServer(
+        remote_url=args.url,
+        local_port=args.port,
+        store=store,
+        session_meta=meta,
+        on_event=on_event,
+        redact=args.redact,
+    )
+
+    proxy.run()
+
+    if not args.quiet:
+        sys.stderr.write(
+            f"\nagent-strace: session {meta.session_id} complete\n"
+            f"agent-strace: {meta.tool_calls} tool calls, "
+            f"{meta.llm_requests} llm requests, "
+            f"{meta.errors} errors\n"
+            f"agent-strace: replay with: agent-strace replay {meta.session_id}\n"
+        )
+
+    return 0
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -239,6 +286,52 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_setup(args: argparse.Namespace) -> None:
+    """Generate Claude Code hooks configuration."""
+    redact_env = ""
+    if args.redact:
+        redact_env = "AGENT_TRACE_REDACT=1 "
+
+    cmd_prefix = f"{redact_env}agent-strace hook"
+
+    config = {
+        "hooks": {
+            "PreToolUse": [{
+                "matcher": "",
+                "hooks": [{"type": "command", "command": f"{cmd_prefix} pre-tool"}],
+            }],
+            "PostToolUse": [{
+                "matcher": "",
+                "hooks": [{"type": "command", "command": f"{cmd_prefix} post-tool"}],
+            }],
+            "PostToolUseFailure": [{
+                "matcher": "",
+                "hooks": [{"type": "command", "command": f"{cmd_prefix} post-tool-failure"}],
+            }],
+            "SessionStart": [{
+                "hooks": [{"type": "command", "command": f"{cmd_prefix} session-start"}],
+            }],
+            "SessionEnd": [{
+                "hooks": [{"type": "command", "command": f"{cmd_prefix} session-end"}],
+            }],
+        }
+    }
+
+    output = json.dumps(config, indent=2)
+
+    if args.global_config:
+        sys.stderr.write("Add this to ~/.claude/settings.json:\n\n")
+    else:
+        sys.stderr.write("Add this to .claude/settings.json:\n\n")
+
+    sys.stdout.write(output + "\n")
+    sys.stderr.write(
+        "\nThis captures every tool call Claude Code makes: "
+        "Bash, Edit, Write, Read, Agent, and all MCP tools.\n"
+        "Replay with: agent-strace replay\n"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-strace",
@@ -254,11 +347,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     # record
-    p_record = sub.add_parser("record", help="record an MCP server session")
+    p_record = sub.add_parser("record", help="record an MCP server session (stdio)")
     p_record.add_argument("--name", "-n", help="name for this agent/session")
+    p_record.add_argument("--redact", action="store_true", help="redact secrets from trace data")
     p_record.add_argument("--verbose", "-v", action="store_true", help="print events to stderr during recording")
     p_record.add_argument("--quiet", "-q", action="store_true", help="suppress all output except errors")
     p_record.add_argument("command", nargs=argparse.REMAINDER, help="MCP server command to run")
+
+    # record-http
+    p_record_http = sub.add_parser("record-http", help="record a remote MCP server session (HTTP/SSE)")
+    p_record_http.add_argument("--url", "-u", required=True, help="remote MCP server URL")
+    p_record_http.add_argument("--port", "-p", type=int, default=5100, help="local proxy port (default: 5100)")
+    p_record_http.add_argument("--name", "-n", help="name for this agent/session")
+    p_record_http.add_argument("--redact", action="store_true", help="redact secrets from trace data")
+    p_record_http.add_argument("--verbose", "-v", action="store_true", help="print events to stderr during recording")
+    p_record_http.add_argument("--quiet", "-q", action="store_true", help="suppress all output except errors")
 
     # replay
     p_replay = sub.add_parser("replay", help="replay a recorded session")
@@ -283,6 +386,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats = sub.add_parser("stats", help="show session statistics")
     p_stats.add_argument("session_id", nargs="?", help="session ID (default: latest)")
 
+    # hook (called by Claude Code hooks system)
+    p_hook = sub.add_parser("hook", help="handle a Claude Code hook event (internal)")
+    p_hook.add_argument("event", nargs="?", help="hook event: session-start, session-end, pre-tool, post-tool, post-tool-failure")
+
+    # setup (generate Claude Code hooks config)
+    p_setup = sub.add_parser("setup", help="generate Claude Code hooks configuration")
+    p_setup.add_argument("--redact", action="store_true", help="enable secret redaction")
+    p_setup.add_argument("--global", dest="global_config", action="store_true", help="output config for ~/.claude/settings.json (all projects)")
+
     return parser
 
 
@@ -294,8 +406,18 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
+    # hook subcommand is handled separately (reads stdin)
+    if args.command == "hook":
+        hook_main([args.event] if args.event else [])
+        sys.exit(0)
+
+    if args.command == "setup":
+        cmd_setup(args)
+        sys.exit(0)
+
     handlers = {
         "record": cmd_record,
+        "record-http": cmd_record_http,
         "replay": cmd_replay,
         "list": cmd_list,
         "inspect": cmd_inspect,

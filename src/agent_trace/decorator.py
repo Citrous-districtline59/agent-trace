@@ -23,22 +23,26 @@ import time
 from typing import Any, Callable
 
 from .models import EventType, SessionMeta, TraceEvent
+from .redact import redact_data
 from .store import TraceStore
 
 # module-level active session
 _active_store: TraceStore | None = None
 _active_session: SessionMeta | None = None
+_active_redact: bool = False
 
 
 def start_session(
     name: str = "",
     trace_dir: str = ".agent-traces",
+    redact: bool = False,
 ) -> str:
     """Start a new trace session. Returns the session ID."""
-    global _active_store, _active_session
+    global _active_store, _active_session, _active_redact
 
     _active_store = TraceStore(trace_dir)
     _active_session = SessionMeta(agent_name=name)
+    _active_redact = redact
     _active_store.create_session(_active_session)
 
     event = TraceEvent(
@@ -78,12 +82,15 @@ def end_session() -> SessionMeta | None:
     meta = _active_session
     _active_store = None
     _active_session = None
+    _active_redact = False
     return meta
 
 
 def _emit_event(event: TraceEvent) -> None:
     if _active_store and _active_session:
         event.session_id = _active_session.session_id
+        if _active_redact:
+            event.data = redact_data(event.data)
         _active_store.append_event(_active_session.session_id, event)
 
         if event.event_type == EventType.TOOL_CALL:

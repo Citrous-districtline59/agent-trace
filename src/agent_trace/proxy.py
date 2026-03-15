@@ -28,6 +28,7 @@ import time
 from typing import IO, Any, Callable
 
 from .models import EventType, SessionMeta, TraceEvent
+from .redact import redact_data
 from .store import TraceStore
 
 
@@ -200,15 +201,19 @@ class MCPProxy:
         store: TraceStore,
         session_meta: SessionMeta,
         on_event: Callable[[TraceEvent], None] | None = None,
+        redact: bool = False,
     ):
         self.server_command = server_command
         self.store = store
         self.meta = session_meta
         self.on_event = on_event
+        self.redact = redact
         self._pending_calls: dict[Any, TraceEvent] = {}
 
     def _emit(self, event: TraceEvent) -> None:
         event.session_id = self.meta.session_id
+        if self.redact:
+            event.data = redact_data(event.data)
         self.store.append_event(self.meta.session_id, event)
 
         # update counters
