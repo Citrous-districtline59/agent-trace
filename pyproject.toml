@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "agent-trace"
@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "Siddhant Khare", email = "siddhantkhare2694@gmail.com" }
 ]
-keywords = ["ai", "agents", "observability", "tracing", "mcp", "llm"]
+keywords = ["ai", "agents", "observability", "tracing", "mcp", "llm", "tool-calls"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Debuggers",
     "Topic :: System :: Monitoring",
 ]
@@ -32,6 +33,7 @@ agent-trace = "agent_trace.cli:main"
 Homepage = "https://github.com/Siddhant-K-code/agent-trace"
 Repository = "https://github.com/Siddhant-K-code/agent-trace"
 Issues = "https://github.com/Siddhant-K-code/agent-trace/issues"
+Documentation = "https://github.com/Siddhant-K-code/agent-trace#readme"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_trace"]

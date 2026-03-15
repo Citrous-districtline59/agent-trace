@@ -15,14 +15,14 @@ LangSmith traces LLM calls. That's one layer. The gap is everything around it: t
 ## Install
 
 ```bash
+# With uv (recommended)
+uv tool install agent-trace
+
+# Or with pip
 pip install agent-trace
-```
 
-Or clone and use directly:
-
-```bash
-git clone https://github.com/Siddhant-K-code/agent-trace.git
-cd agent-trace
+# Or run without installing
+uvx agent-trace replay
 ```
 
 **Zero dependencies.** Python 3.10+ standard library only.
@@ -208,6 +208,74 @@ Each event is a single JSON line:
 
 Events link to each other. A `tool_result` has a `parent_id` pointing to its `tool_call`. This lets you measure latency per tool and trace the full call chain.
 
+## Use with Claude Code, Cursor, Windsurf
+
+agent-trace works with any tool that launches MCP servers. The idea is simple: instead of launching the MCP server directly, launch it through `agent-trace record`. The agent and server don't know the proxy exists.
+
+### Claude Code
+
+```bash
+# Instead of:
+claude mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /tmp
+
+# Use:
+claude mcp add filesystem -- agent-trace record --name filesystem -- npx -y @modelcontextprotocol/server-filesystem /tmp
+```
+
+Or edit `.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "agent-trace",
+      "args": ["record", "--name", "filesystem", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+```
+
+### Cursor
+
+Edit `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per-project):
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "agent-trace",
+      "args": ["record", "--name", "filesystem", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+```
+
+### Windsurf
+
+Edit `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "agent-trace",
+      "args": ["record", "--name", "filesystem", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+```
+
+### Any MCP client
+
+The pattern is the same for any tool that uses MCP over stdio:
+
+1. Replace the server `command` with `agent-trace`
+2. Prepend `record --name <label> --` to the original args
+3. Use the tool normally
+4. Run `agent-trace replay` to see what happened
+
+See the [examples/](examples/) directory for full config files.
+
 ## How it works
 
 ### MCP proxy mode
@@ -247,6 +315,28 @@ src/agent_trace/
 
 ```bash
 python -m unittest discover -s tests -v
+```
+
+## Development
+
+```bash
+git clone https://github.com/Siddhant-K-code/agent-trace.git
+cd agent-trace
+
+# Run tests
+python -m unittest discover -s tests -v
+
+# Run the example
+PYTHONPATH=src python examples/basic_agent.py
+
+# Replay the example
+PYTHONPATH=src python -m agent_trace.cli replay
+
+# Build the package
+uv build
+
+# Install locally for testing
+uv tool install -e .
 ```
 
 ## Related

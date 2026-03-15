@@ -32,35 +32,61 @@ from .store import TraceStore
 
 
 def _read_message(stream: IO[bytes]) -> dict[str, Any] | None:
-    """Read a single JSON-RPC message with Content-Length framing."""
-    content_length = -1
+    """Read a single JSON-RPC message.
 
+    Supports two framing modes:
+    1. Content-Length headers (LSP-style, used by some MCP servers)
+    2. Newline-delimited JSON (MCP spec: messages delimited by newlines)
+
+    Auto-detects the mode from the first bytes.
+    """
     while True:
         line = stream.readline()
         if not line:
             return None
 
         line_str = line.decode("utf-8", errors="replace").strip()
+        if not line_str:
+            continue
 
+        # Content-Length framing
         if line_str.startswith("Content-Length:"):
             content_length = int(line_str.split(":")[1].strip())
-        elif line_str == "":
-            if content_length > 0:
-                body = stream.read(content_length)
-                if not body:
+            # consume the blank line after headers
+            while True:
+                header_line = stream.readline()
+                if not header_line:
                     return None
-                try:
-                    return json.loads(body.decode("utf-8"))
-                except json.JSONDecodeError:
-                    return None
-            # empty line without content-length, keep reading
+                if header_line.strip() == b"":
+                    break
+            body = stream.read(content_length)
+            if not body:
+                return None
+            try:
+                return json.loads(body.decode("utf-8"))
+            except json.JSONDecodeError:
+                return None
+
+        # Newline-delimited JSON
+        if line_str.startswith("{"):
+            try:
+                return json.loads(line_str)
+            except json.JSONDecodeError:
+                continue
 
 
-def _write_message(stream: IO[bytes], msg: dict[str, Any]) -> None:
-    """Write a JSON-RPC message with Content-Length framing."""
+def _write_message(stream: IO[bytes], msg: dict[str, Any], use_content_length: bool = False) -> None:
+    """Write a JSON-RPC message.
+
+    Uses newline-delimited JSON by default (MCP spec).
+    Set use_content_length=True for LSP-style framing.
+    """
     body = json.dumps(msg).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
-    stream.write(header + body)
+    if use_content_length:
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+        stream.write(header + body)
+    else:
+        stream.write(body + b"\n")
     stream.flush()
 
 
