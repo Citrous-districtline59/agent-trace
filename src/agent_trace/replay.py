@@ -82,6 +82,86 @@ def _format_duration(ms: float | None) -> str:
     return f" ({ms / 1000:.2f}s)"
 
 
+def _strip_markdown(text: str) -> str:
+    """Remove markdown formatting for terminal display."""
+    import re
+    # Bold and italic
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+    text = re.sub(r'_(.+?)_', r'\1', text)
+    # Inline code
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    # Headers
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Links [text](url) -> text
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+    # Collapse multiple newlines
+    text = re.sub(r'\n{2,}', ' ', text)
+    text = text.replace('\n', ' ')
+    return text.strip()
+
+
+def _tool_call_detail(tool_name: str, args: dict) -> str:
+    """Extract the most useful detail from tool call arguments."""
+    if not args:
+        return ""
+    name = tool_name.lower()
+
+    # Bash: show the command
+    if name == "bash" and "command" in args:
+        cmd = str(args["command"])
+        if len(cmd) > 120:
+            cmd = cmd[:120] + "..."
+        return f"$ {cmd}"
+
+    # Read/Write: show the file path
+    if name in ("read", "write") and "file_path" in args:
+        return str(args["file_path"])
+
+    # Edit: show file path and a hint of what changed
+    if name == "edit":
+        path = args.get("file_path", "")
+        old = args.get("old_string", args.get("old_text", ""))
+        if path and old:
+            old_preview = str(old)[:60].replace("\n", " ")
+            if len(str(old)) > 60:
+                old_preview += "..."
+            return f"{path} (replacing: {old_preview})"
+        if path:
+            return str(path)
+
+    # Glob/Grep: show the pattern
+    if name == "glob" and "pattern" in args:
+        return str(args["pattern"])
+    if name == "grep" and "pattern" in args:
+        path = args.get("path", "")
+        return f"/{args['pattern']}/ {path}".strip()
+
+    # WebFetch: show URL
+    if name == "webfetch" and "url" in args:
+        return str(args["url"])
+
+    # WebSearch: show query
+    if name == "websearch" and "query" in args:
+        return str(args["query"])
+
+    # Agent: show the task
+    if name == "agent" and "prompt" in args:
+        prompt = str(args["prompt"])
+        if len(prompt) > 120:
+            prompt = prompt[:120] + "..."
+        return prompt
+
+    # MCP tools: show first string arg value
+    for key, val in args.items():
+        if isinstance(val, str) and val and len(val) < 150:
+            return f"{key}: {val}"
+
+    # Fallback: show arg keys
+    return ", ".join(args.keys())
+
+
 def format_event(event: TraceEvent, base_ts: float | None = None) -> str:
     """Format a single event as a colored terminal line."""
     color = EVENT_COLORS.get(event.event_type, C.WHITE)
@@ -97,21 +177,32 @@ def format_event(event: TraceEvent, base_ts: float | None = None) -> str:
     if event.event_type == EventType.TOOL_CALL:
         name = event.data.get("tool_name", "?")
         args = event.data.get("arguments", {})
-        arg_keys = ", ".join(args.keys()) if args else ""
         parts.append(f"{color}{C.BOLD}tool_call{C.RESET} {C.WHITE}{name}{C.RESET}")
-        if arg_keys:
-            parts.append(f"{C.DIM}({arg_keys}){C.RESET}")
+        # Show the most useful argument value inline
+        detail = _tool_call_detail(name, args)
+        if detail:
+            parts.append(f"\n{C.GRAY}{'':>14}  {detail}{C.RESET}")
 
     elif event.event_type == EventType.TOOL_RESULT:
+        name = event.data.get("tool_name", "")
+        result = event.data.get("result", "")
         preview = event.data.get("content_preview", "")
         types = event.data.get("content_types", [])
         type_str = ",".join(types) if types else ""
         parts.append(f"{color}tool_result{C.RESET}")
+        if name:
+            parts.append(f"{C.DIM}{name}{C.RESET}")
         if type_str:
             parts.append(f"{C.DIM}[{type_str}]{C.RESET}")
         parts.append(f"{duration}")
-        if preview:
-            parts.append(f"\n{C.GRAY}{'':>14}  {preview[:120]}{C.RESET}")
+        # Show a preview of the result
+        output = result or preview
+        if output:
+            output = _strip_markdown(str(output))
+            output_preview = output[:120]
+            if len(output) > 120:
+                output_preview += "..."
+            parts.append(f"\n{C.GRAY}{'':>14}  {output_preview}{C.RESET}")
 
     elif event.event_type == EventType.LLM_REQUEST:
         model = event.data.get("model", "")
@@ -137,9 +228,17 @@ def format_event(event: TraceEvent, base_ts: float | None = None) -> str:
         parts.append(f"{color}file_write{C.RESET} {C.DIM}{uri}{C.RESET}")
 
     elif event.event_type == EventType.ERROR:
-        msg = event.data.get("message", "")
+        msg = event.data.get("message", "") or event.data.get("error", "")
+        name = event.data.get("tool_name", "")
         code = event.data.get("code", "")
-        parts.append(f"{color}{C.BOLD}error{C.RESET} {C.RED}{msg}{C.RESET}")
+        parts.append(f"{color}{C.BOLD}error{C.RESET}")
+        if name:
+            parts.append(f"{C.RED}{name}{C.RESET}")
+        if msg:
+            msg_preview = str(msg)[:120]
+            if len(str(msg)) > 120:
+                msg_preview += "..."
+            parts.append(f"\n{C.GRAY}{'':>14}  {C.RED}{msg_preview}{C.RESET}")
         if code:
             parts.append(f"{C.DIM}(code: {code}){C.RESET}")
 
@@ -172,8 +271,9 @@ def format_event(event: TraceEvent, base_ts: float | None = None) -> str:
 
     elif event.event_type == EventType.ASSISTANT_RESPONSE:
         text = event.data.get("text", "")
-        preview = text[:150]
-        if len(text) > 150:
+        text = _strip_markdown(text)
+        preview = text[:200]
+        if len(text) > 200:
             preview += "..."
         parts.append(f"{color}{C.BOLD}assistant_response{C.RESET}")
         if preview:
