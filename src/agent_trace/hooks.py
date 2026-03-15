@@ -289,9 +289,10 @@ def handle_post_tool(input_data: dict, failed: bool = False) -> None:
 
     if failed:
         event_type = EventType.ERROR
+        error_msg = str(tool_output)[:500] if tool_output else "tool call failed"
         event_data = {
             "tool_name": tool_name,
-            "error": str(tool_output)[:500],
+            "error": error_msg,
         }
     else:
         event_type = EventType.TOOL_RESULT

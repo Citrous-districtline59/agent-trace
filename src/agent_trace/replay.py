@@ -85,6 +85,8 @@ def _format_duration(ms: float | None) -> str:
 def _strip_markdown(text: str) -> str:
     """Remove markdown formatting for terminal display."""
     import re
+    # Code blocks (fenced)
+    text = re.sub(r'```[\s\S]*?```', '', text)
     # Bold and italic
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
     text = re.sub(r'\*(.+?)\*', r'\1', text)
@@ -96,9 +98,16 @@ def _strip_markdown(text: str) -> str:
     text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
     # Links [text](url) -> text
     text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
-    # Collapse multiple newlines
+    # Markdown tables: strip separator rows and pipe formatting
+    text = re.sub(r'^\|?[-:| ]+\|[-:| ]+\|?$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\|(.+)\|$', lambda m: m.group(1).replace('|', ', ').strip(), text, flags=re.MULTILINE)
+    # List markers
+    text = re.sub(r'^[\s]*[-*+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^[\s]*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Collapse multiple spaces and newlines
     text = re.sub(r'\n{2,}', ' ', text)
     text = text.replace('\n', ' ')
+    text = re.sub(r' {2,}', ' ', text)
     return text.strip()
 
 
@@ -234,13 +243,14 @@ def format_event(event: TraceEvent, base_ts: float | None = None) -> str:
         parts.append(f"{color}{C.BOLD}error{C.RESET}")
         if name:
             parts.append(f"{C.RED}{name}{C.RESET}")
-        if msg:
-            msg_preview = str(msg)[:120]
-            if len(str(msg)) > 120:
-                msg_preview += "..."
-            parts.append(f"\n{C.GRAY}{'':>14}  {C.RED}{msg_preview}{C.RESET}")
         if code:
             parts.append(f"{C.DIM}(code: {code}){C.RESET}")
+        if msg:
+            msg = _strip_markdown(str(msg))
+            msg_preview = msg[:150]
+            if len(msg) > 150:
+                msg_preview += "..."
+            parts.append(f"\n{C.GRAY}{'':>14}  {C.RED}{msg_preview}{C.RESET}")
 
     elif event.event_type == EventType.SESSION_START:
         cmd = event.data.get("command", [])

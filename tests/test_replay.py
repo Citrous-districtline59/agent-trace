@@ -37,6 +37,38 @@ class TestStripMarkdown(unittest.TestCase):
     def test_plain_text_unchanged(self):
         self.assertEqual(_strip_markdown("hello world"), "hello world")
 
+    def test_table_stripped(self):
+        table = "| File | Tests |\n|---|---|\n| test_a.py | 7 |\n| test_b.py | 25 |"
+        result = _strip_markdown(table)
+        self.assertNotIn("|---|", result)
+        self.assertIn("test_a.py", result)
+        self.assertIn("7", result)
+
+    def test_table_separator_removed(self):
+        result = _strip_markdown("|---|---|")
+        self.assertEqual(result, "")
+
+    def test_code_block_removed(self):
+        result = _strip_markdown("before\n```python\nprint('hi')\n```\nafter")
+        self.assertNotIn("print", result)
+        self.assertIn("before", result)
+        self.assertIn("after", result)
+
+    def test_list_markers_stripped(self):
+        result = _strip_markdown("- item one\n- item two\n* item three")
+        self.assertIn("item one", result)
+        self.assertNotIn("- ", result)
+        self.assertNotIn("* ", result)
+
+    def test_numbered_list_stripped(self):
+        result = _strip_markdown("1. first\n2. second")
+        self.assertIn("first", result)
+        self.assertNotIn("1.", result)
+
+    def test_multiple_spaces_collapsed(self):
+        result = _strip_markdown("hello    world")
+        self.assertEqual(result, "hello world")
+
 
 class TestToolCallDetail(unittest.TestCase):
     def test_bash_command(self):
