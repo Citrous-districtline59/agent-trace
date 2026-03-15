@@ -1,16 +1,12 @@
 # agent-trace
 
-`strace` for AI agents.
-
-Capture every tool call, LLM request, and decision point. Replay the session later. See what the agent did, in what order, and how long each step took.
-
-We have `strace` for syscalls. We have `tcpdump` for packets. We have nothing for agent tool calls. This fills that gap.
+`strace` for AI agents. Capture and replay every tool call, prompt, and response from Claude Code, Cursor, or any MCP client.
 
 ## Why
 
-When a coding agent rewrites 20 files in a background session, you get a pull request. You don't get the story of how it got there. Which files did it read first? What context was in the window when it decided to change the approach? Why did it call the same tool three times?
+A coding agent rewrites 20 files in a background session. You get a pull request. You do not get the story. Which files did it read first? Why did it call the same tool three times? What failed before it found the fix?
 
-Existing tools trace LLM calls. That's one layer. The gap is everything around it: tool calls, file operations, decision points, error recovery. `agent-strace` captures the full picture.
+Most tools trace LLM calls. That is one layer. The gap is everything around it: tool calls, file operations, decision points, error recovery, the actual commands the agent ran. `agent-strace` captures the full session and lets you replay it later. Export to Datadog, Honeycomb, New Relic, or Splunk when you need production observability.
 
 ## Install
 
@@ -29,18 +25,16 @@ uvx agent-strace replay
 
 ## Quick start
 
-### Option 1: Claude Code hooks (captures everything)
+### Option 1: Claude Code hooks (full session capture)
 
-Trace every tool call Claude Code makes — Bash, Edit, Write, Read, Agent, Grep, Glob, WebFetch, WebSearch, and all MCP tools.
+Captures everything: user prompts, assistant responses, and every tool call (Bash, Edit, Write, Read, Agent, Grep, Glob, WebFetch, WebSearch, all MCP tools).
 
 ```bash
-# Generate the hooks config
-agent-strace setup
-
-# Prints JSON to add to .claude/settings.json (or ~/.claude/settings.json with --global)
+agent-strace setup        # prints hooks config JSON
+agent-strace setup --global  # for all projects
 ```
 
-Or add the hooks manually to `.claude/settings.json`:
+Add the output to `.claude/settings.json`. Or paste it manually:
 
 ```json
 {
@@ -56,7 +50,7 @@ Or add the hooks manually to `.claude/settings.json`:
 }
 ```
 
-Then use Claude Code normally. Every tool call is traced.
+Then use Claude Code normally.
 
 ```bash
 agent-strace list     # list sessions
@@ -66,19 +60,16 @@ agent-strace stats    # tool call frequency and timing
 
 ### Option 2: MCP proxy (any MCP client)
 
-Wrap any MCP server. Every JSON-RPC message between agent and server is captured.
+Wraps any MCP server. Works with Cursor, Windsurf, or any MCP client.
 
 ```bash
-# Record a session
 agent-strace record -- npx -y @modelcontextprotocol/server-filesystem /tmp
-
-# Replay
-agent-strace replay a84664
+agent-strace replay
 ```
 
 ### Option 3: Python decorator
 
-Wrap your tool functions. No MCP required.
+Wraps your tool functions directly. No MCP required.
 
 ```python
 from agent_trace import trace_tool, trace_llm_call, start_session, end_session, log_decision
@@ -151,56 +142,50 @@ The proxy forwards POST `/message` and GET `/sse` to the remote server, capturin
 
 ### Replay output
 
+A real Claude Code session captured with hooks:
+
 ```
 Session Summary
 ──────────────────────────────────────────────────
-  Session:    a84664242afa4516
-  Agent:      coding-agent
-  Duration:   0.85s
-  Tool calls: 6
-  LLM reqs:   2
-  Errors:     1
+  Session:    201da364-edd6-49
+  Command:    claude-code (startup)
+  Agent:      claude-code
+  Duration:   112.54s
+  Tool calls: 8
+  Errors:     3
 ──────────────────────────────────────────────────
 
 +  0.00s ▶ session_start
-+  0.00s ⬆ llm_request claude-4 (1 messages)
-+  0.13s ⬇ llm_response (132ms)
-+  0.13s ◆ decision read_file_first
-              reason: Need to understand current implementation before making changes
-+  0.13s → tool_call read_file (path)
-+  0.16s ← tool_result [text] (22ms)
-              "contents of src/auth.py: def hello(): print('world')"
-+  0.16s → tool_call search_codebase (query)
-+  0.25s ← tool_result [text] (96ms)
-+  0.25s ⬆ llm_request claude-4 (3 messages)
-+  0.36s ⬇ llm_response (109ms)
-+  0.36s ◆ decision apply_fix
-              reason: LLM provided a clear fix, confidence is high
-+  0.36s → tool_call write_file (path, content)
-+  0.41s ← tool_result [text] (45ms)
-+  0.41s → tool_call run_tests (test_path)
-+  0.61s ✗ error Test failed: tests/test_auth.py
-+  0.61s ◆ decision retry_fix
-              reason: Tests failed, need to adjust the implementation
-+  0.61s → tool_call write_file (path, content)
-+  0.63s ← tool_result [text] (27ms)
-+  0.64s → tool_call run_tests (test_path)
-+  0.85s ← tool_result [text] (216ms)
-+  0.85s ■ session_end
++  0.07s 👤 user_prompt
+              "how many tests does this project have? run them and tell me the results"
++  3.55s → tool_call Glob
+              **/*.test.*
++  3.55s → tool_call Glob
+              **/test_*.*
++  3.60s ← tool_result Glob (51ms)
++  6.06s → tool_call Bash
+              $ python -m pytest tests/ -v 2>&1
++ 27.65s ✗ error Bash
+              Command failed with exit code 1
++ 29.89s → tool_call Bash
+              $ python3 -m pytest tests/ -v 2>&1
++ 40.56s ✗ error Bash
+              No module named pytest
++ 45.96s → tool_call Bash
+              $ which pytest || ls /Users/ona-siddhant/Desktop/test-agent-trace/ 2>&1
++ 46.01s ← tool_result Bash (51ms)
++ 48.18s → tool_call Read
+              /Users/ona-siddhant/Desktop/test-agent-trace/pyproject.toml
++ 48.23s ← tool_result Read (43ms)
++ 51.43s → tool_call Bash
+              $ uv run --with pytest pytest tests/ -v 2>&1
++1m43.67s ← tool_result Bash (5.88s)
+              75 tests, all passing in 3.60s
++1m52.54s 🤖 assistant_response
+              "75 tests, all passing in 3.60s. Breakdown by file: ..."
 ```
 
-### Stats output
-
-```
-  Tool Call Frequency:
-    write_file                        2x  avg: 36ms
-    run_tests                         2x  avg: 216ms
-    read_file                         1x  avg: 22ms
-    search_codebase                   1x  avg: 96ms
-
-  Errors (1):
-    Test failed: tests/test_auth.py
-```
+Tool calls show actual values: commands, file paths, glob patterns. Errors show what failed. Assistant responses are stripped of markdown.
 
 ### Filtering
 
@@ -272,16 +257,14 @@ Events link to each other. A `tool_result` has a `parent_id` pointing to its `to
 
 ## Use with Claude Code, Cursor, Windsurf
 
-### Claude Code (hooks — captures all tool calls)
+### Claude Code (hooks, recommended)
 
-Claude Code's [hooks system](https://code.claude.com/docs/en/hooks) fires events for every tool call, not just MCP. This is the recommended integration.
+Captures the full session: prompts, responses, and every tool call. See [examples/claude_code_config.md](examples/claude_code_config.md) for the full config.
 
 ```bash
-agent-strace setup        # prints the hooks config JSON
-agent-strace setup --redact --global  # with redaction, for all projects
+agent-strace setup                    # per-project config
+agent-strace setup --redact --global  # all projects, with secret redaction
 ```
-
-Add the output to `.claude/settings.json` (per-project) or `~/.claude/settings.json` (global). See [examples/claude_code_config.md](examples/claude_code_config.md) for the full config and a table of what gets captured.
 
 ### Cursor
 
@@ -326,7 +309,7 @@ See the [examples/](examples/) directory for full config files.
 
 ## Production tracing (OTLP export)
 
-agent-trace can export sessions as OpenTelemetry spans to any OTLP-compatible backend. Each session becomes a trace. Each tool call becomes a span. User prompts and assistant responses become events on the root span.
+Export sessions as OpenTelemetry spans to your existing observability stack. Sessions become traces. Tool calls become spans with duration and inputs. Errors get exception events. Zero new dependencies.
 
 ### Datadog
 
@@ -411,7 +394,7 @@ Claude Code agentic loop
                          .agent-traces/
 ```
 
-Claude Code fires hook events at every stage of its agentic loop. agent-strace registers as a hook handler, receives JSON on stdin, and writes trace events. This captures the full conversation: user prompts, assistant text responses, and all tool calls (Bash, Edit, Write, Read, Agent, Grep, Glob, WebFetch, WebSearch, and all MCP tools). Session state is tracked via `.agent-traces/.active-session` so separate hook processes can correlate PreToolUse with PostToolUse for latency measurement.
+Claude Code fires hook events at every stage of its agentic loop. agent-strace registers as a handler, reads JSON from stdin, and writes trace events. Each hook runs as a separate process. Session state lives in `.agent-traces/.active-session` so PreToolUse and PostToolUse can be correlated for latency measurement.
 
 ### MCP stdio proxy
 
@@ -421,7 +404,7 @@ Agent ←→ agent-strace proxy ←→ MCP Server (stdio)
          .agent-traces/
 ```
 
-The proxy reads JSON-RPC messages (Content-Length framed or newline-delimited), classifies each message as a tool call, result, error, or notification, and writes a trace event. The message is forwarded unchanged. The agent and server don't know the proxy exists.
+The proxy reads JSON-RPC messages (Content-Length framed or newline-delimited), classifies each one, and writes a trace event. Messages are forwarded unchanged. The agent and server do not know the proxy exists.
 
 ### MCP HTTP/SSE proxy
 
@@ -431,7 +414,7 @@ Agent ←→ agent-strace proxy (localhost:3100) ←→ Remote MCP Server (HTTPS
          .agent-traces/
 ```
 
-Same idea, different transport. The proxy listens on a local port, forwards POST and SSE requests to the remote server, and captures every JSON-RPC message in both directions. Tool call latency is measured from request to response.
+Same idea, different transport. Listens on a local port, forwards POST and SSE requests to the remote server, captures every JSON-RPC message in both directions.
 
 ### Decorator mode
 
@@ -441,11 +424,11 @@ def my_function(x):
     return x * 2
 ```
 
-The decorator wraps the function call. It logs a `tool_call` event before execution and a `tool_result` event after. If the function raises, it logs an `error` event. Timing is captured automatically.
+The decorator logs a `tool_call` event before execution and a `tool_result` after. Errors and timing are captured automatically.
 
 ### Secret redaction
 
-When `--redact` is enabled (or `redact=True` in the decorator API), every trace event is passed through a redaction filter before being written to disk. The filter checks both key names (e.g., `password`, `api_key`) and value patterns (e.g., `sk-*`, `ghp_*`, JWTs). Redacted values are replaced with `[REDACTED]`. The original data is never stored.
+When `--redact` is enabled (or `redact=True` in the decorator API), trace events pass through a redaction filter before hitting disk. The filter checks key names (`password`, `api_key`) and value patterns (`sk-*`, `ghp_*`, JWTs). Redacted values become `[REDACTED]`. The original data is never stored.
 
 ## Project structure
 
