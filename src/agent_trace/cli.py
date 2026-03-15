@@ -8,7 +8,7 @@ Usage:
     agent-strace replay [session-id]
     agent-strace list
     agent-strace inspect <session-id>
-    agent-strace export <session-id> [--format json|csv]
+    agent-strace export <session-id> [--format json|csv|otlp]
 """
 
 from __future__ import annotations
@@ -187,7 +187,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    """Export a session to JSON or CSV."""
+    """Export a session to JSON, CSV, or OTLP."""
     store = TraceStore(args.trace_dir)
 
     session_id = args.session_id
@@ -221,6 +221,33 @@ def cmd_export(args: argparse.Namespace) -> int:
     elif args.format == "ndjson":
         for e in events:
             sys.stdout.write(e.to_json() + "\n")
+
+    elif args.format == "otlp":
+        from .otlp import export_otlp, session_to_otlp
+
+        endpoint = args.endpoint
+        if not endpoint:
+            # No endpoint: dump OTLP JSON to stdout
+            meta = store.load_meta(session_id)
+            payload = session_to_otlp(meta, events, service_name=args.service_name)
+            sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+            return 0
+
+        # Build headers from --header flags
+        headers = {}
+        for h in (args.header or []):
+            if ":" in h:
+                key, val = h.split(":", 1)
+                headers[key.strip()] = val.strip()
+
+        ok = export_otlp(
+            store=store,
+            session_id=session_id,
+            endpoint=endpoint,
+            headers=headers,
+            service_name=args.service_name,
+        )
+        return 0 if ok else 1
 
     return 0
 
@@ -387,7 +414,10 @@ def build_parser() -> argparse.ArgumentParser:
     # export
     p_export = sub.add_parser("export", help="export a session")
     p_export.add_argument("session_id", help="session ID or prefix")
-    p_export.add_argument("--format", choices=["json", "csv", "ndjson"], default="json")
+    p_export.add_argument("--format", choices=["json", "csv", "ndjson", "otlp"], default="json")
+    p_export.add_argument("--endpoint", help="OTLP collector URL (e.g. http://localhost:4318)")
+    p_export.add_argument("--header", action="append", help="HTTP header for OTLP (e.g. 'x-honeycomb-team: KEY')")
+    p_export.add_argument("--service-name", default="agent-trace", help="OTel service name (default: agent-trace)")
 
     # stats
     p_stats = sub.add_parser("stats", help="show session statistics")

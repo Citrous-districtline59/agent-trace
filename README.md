@@ -118,7 +118,7 @@ agent-strace replay [session-id]           Replay a session (default: latest)
 agent-strace list                          List all sessions
 agent-strace stats [session-id]            Show tool call frequency and timing
 agent-strace inspect <session-id>          Dump full session as JSON
-agent-strace export <session-id>           Export as JSON, CSV, or NDJSON
+agent-strace export <session-id>           Export as JSON, CSV, NDJSON, or OTLP
 ```
 
 ### Secret redaction
@@ -324,6 +324,76 @@ The pattern is the same for any tool that uses MCP over stdio:
 
 See the [examples/](examples/) directory for full config files.
 
+## Production tracing (OTLP export)
+
+agent-trace can export sessions as OpenTelemetry spans to any OTLP-compatible backend. Each session becomes a trace. Each tool call becomes a span. User prompts and assistant responses become events on the root span.
+
+### Datadog
+
+```bash
+# Via the Datadog Agent's OTLP receiver (port 4318)
+agent-strace export <session-id> --format otlp \
+  --endpoint http://localhost:4318
+
+# Or via Datadog's OTLP intake directly
+agent-strace export <session-id> --format otlp \
+  --endpoint https://http-intake.logs.datadoghq.com:443 \
+  --header "DD-API-KEY: $DD_API_KEY"
+```
+
+### Honeycomb
+
+```bash
+agent-strace export <session-id> --format otlp \
+  --endpoint https://api.honeycomb.io \
+  --header "x-honeycomb-team: $HONEYCOMB_API_KEY" \
+  --service-name my-agent
+```
+
+### New Relic
+
+```bash
+agent-strace export <session-id> --format otlp \
+  --endpoint https://otlp.nr-data.net \
+  --header "api-key: $NEW_RELIC_LICENSE_KEY"
+```
+
+### Splunk
+
+```bash
+agent-strace export <session-id> --format otlp \
+  --endpoint https://ingest.<realm>.signalfx.com \
+  --header "X-SF-Token: $SPLUNK_ACCESS_TOKEN"
+```
+
+### Grafana Tempo / Jaeger
+
+```bash
+# Local collector
+agent-strace export <session-id> --format otlp \
+  --endpoint http://localhost:4318
+```
+
+### Dump OTLP JSON without sending
+
+```bash
+# Inspect the OTLP payload
+agent-strace export <session-id> --format otlp > trace.json
+```
+
+### How it maps
+
+| agent-trace | OpenTelemetry |
+|---|---|
+| session | trace |
+| tool_call + tool_result | span (with duration) |
+| error | span with error status + exception event |
+| user_prompt | event on root span |
+| assistant_response | event on root span |
+| session_id | trace ID |
+| event_id | span ID |
+| parent_id | parent span ID |
+
 ## How it works
 
 ### Claude Code hooks
@@ -388,6 +458,7 @@ src/agent_trace/
   proxy.py          # MCP stdio proxy
   http_proxy.py     # MCP HTTP/SSE proxy
   redact.py         # secret redaction
+  otlp.py           # OTLP/HTTP JSON exporter
   replay.py         # terminal replay and display
   decorator.py      # @trace_tool, @trace_llm_call, log_decision
   cli.py            # CLI entry point
