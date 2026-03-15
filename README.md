@@ -144,6 +144,9 @@ The proxy forwards POST `/message` and GET `/sse` to the remote server, capturin
 
 A real Claude Code session captured with hooks:
 
+<details><summary>Session Summary</summary>
+<p>
+
 ```
 Session Summary
 ──────────────────────────────────────────────────
@@ -172,10 +175,10 @@ Session Summary
 + 40.56s ✗ error Bash
               No module named pytest
 + 45.96s → tool_call Bash
-              $ which pytest || ls /Users/ona-siddhant/Desktop/test-agent-trace/ 2>&1
+              $ which pytest || ls /Users/siddhant/Desktop/test-agent-trace/ 2>&1
 + 46.01s ← tool_result Bash (51ms)
 + 48.18s → tool_call Read
-              /Users/ona-siddhant/Desktop/test-agent-trace/pyproject.toml
+              /Users/siddhant/Desktop/test-agent-trace/pyproject.toml
 + 48.23s ← tool_result Read (43ms)
 + 51.43s → tool_call Bash
               $ uv run --with pytest pytest tests/ -v 2>&1
@@ -186,6 +189,9 @@ Session Summary
 ```
 
 Tool calls show actual values: commands, file paths, glob patterns. Errors show what failed. Assistant responses are stripped of markdown.
+
+</p>
+</details> 
 
 ### Filtering
 
