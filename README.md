@@ -101,18 +101,24 @@ print(f"Replay with: agent-strace replay {meta.session_id}")
 ## CLI commands
 
 ```
-agent-strace setup [--redact] [--global]   Generate Claude Code hooks config
-agent-strace hook <event>                  Handle a Claude Code hook event (internal)
-agent-strace record -- <command>           Record an MCP stdio server session
-agent-strace record-http <url> [--port N]  Record an MCP HTTP/SSE server session
-agent-strace replay [session-id]           Replay a session (default: latest)
-agent-strace list                          List all sessions
-agent-strace stats [session-id]            Show tool call frequency and timing
-agent-strace inspect <session-id>          Dump full session as JSON
-agent-strace export <session-id>           Export as JSON, CSV, NDJSON, or OTLP
-agent-strace import <session.jsonl>        Import a Claude Code JSONL session log
-agent-strace explain [session-id]          Explain a session in plain English
-agent-strace cost [session-id]             Estimate token cost for a session
+agent-strace setup [--redact] [--global]        Generate Claude Code hooks config
+agent-strace hook <event>                       Handle a Claude Code hook event (internal)
+agent-strace record -- <command>                Record an MCP stdio server session
+agent-strace record-http <url> [--port N]       Record an MCP HTTP/SSE server session
+agent-strace replay [session-id]                Replay a session (default: latest)
+agent-strace replay --expand-subagents          Inline subagent sessions under parent tool_call
+agent-strace replay --tree                      Show session hierarchy without full replay
+agent-strace list                               List all sessions
+agent-strace stats [session-id]                 Show tool call frequency and timing
+agent-strace stats --include-subagents          Roll up stats across the full subagent tree
+agent-strace inspect <session-id>               Dump full session as JSON
+agent-strace export <session-id>                Export as JSON, CSV, NDJSON, or OTLP
+agent-strace import <session.jsonl>             Import a Claude Code JSONL session log
+agent-strace explain [session-id]               Explain a session in plain English
+agent-strace cost [session-id]                  Estimate token cost for a session
+agent-strace diff <session-a> <session-b>       Compare two sessions structurally
+agent-strace why [session-id] <event-number>    Trace the causal chain for an event
+agent-strace audit [session-id] [--policy]      Check tool calls against a policy file
 ```
 
 ### Import existing Claude Code sessions
@@ -386,6 +392,128 @@ The pattern is the same for any tool that uses MCP over stdio:
 
 See the [examples/](examples/) directory for full config files.
 
+### Subagent tracing
+
+When an agent spawns subagents (e.g. Claude Code's Agent tool), sessions are linked into a parent-child tree. Replay the full tree inline or view a compact hierarchy:
+
+```bash
+# Inline replay: subagent events appear under the parent tool_call that spawned them
+agent-strace replay --expand-subagents
+
+# Compact hierarchy: session IDs, durations, tool counts
+agent-strace replay --tree
+
+# Aggregated stats across the full tree (tokens, tool calls, errors)
+agent-strace stats --include-subagents
+```
+
+```
+▶ session_start  a84664242afa  agent=claude-code  depth=0
+  + 0.00s  👤 "refactor the auth module"
+  + 1.23s  → tool_call  Agent  "extract helper functions"
+│  ▶ session_start  b12345678901  agent=claude-code  depth=1
+│    + 0.00s  → tool_call  Read  src/auth.py
+│    + 0.12s  ← tool_result
+│    + 0.45s  → tool_call  Write  src/auth_helpers.py
+│    + 0.51s  ■ session_end
+  + 3.10s  ← tool_result
+  + 3.20s  ■ session_end
+```
+
+Subagent sessions are linked via `parent_session_id` and `parent_event_id` in session metadata. Existing sessions without these fields are unaffected.
+
+### Session diff
+
+Compare two sessions structurally. Phases are aligned by label using LCS, then per-phase differences in files touched, commands run, and outcomes are reported:
+
+```bash
+agent-strace diff abc123 def456
+```
+
+```
+Comparing: abc123 vs def456
+
+Diverged at phase 2:
+
+  Phase 2: run tests
+    abc123 only:  $ python -m pytest
+    def456 only:  $ uv run pytest
+
+  abc123: 4m 12s, 47 events, 8 tools, 2 retries
+  def456: 2m 05s, 31 events, 5 tools, 0 retries
+```
+
+### Causal chain (why)
+
+Trace backwards from any event to find what caused it. Event numbers match the output of `agent-strace replay`:
+
+```bash
+agent-strace why abc123 4
+```
+
+```
+Why did event #4 happen?
+
+  #  4  tool_call: Bash  $ pytest tests/
+
+Causal chain (root → target):
+
+    #  1  user_prompt: "run the test suite"
+       (prompt at #1 triggered this)
+  ←  #  3  error: exit 1
+       (retry after error at #3)
+  ←  #  4  tool_call: Bash  $ pytest tests/
+```
+
+Causal links are detected via `parent_id` (tool_result → tool_call), error→retry matching (same tool and command), path references (tool_result text containing a path used by a later call), and read→write pairs on the same file.
+
+### Permission audit
+
+Check every tool call in a session against a policy file. Auto-flags sensitive file access (`.env`, `*.pem`, `.ssh/*`, `.github/workflows/*`, etc.) even without a policy:
+
+```bash
+agent-strace audit                          # latest session, no policy required
+agent-strace audit abc123 --policy .agent-scope.json
+```
+
+```
+AUDIT: Session abc123 (47 events, 23 tool calls)
+
+✅ Allowed (19):
+  Read src/auth.py
+  Ran: uv run pytest
+
+⚠️  No policy (2):
+  Read README.md  (no file read policy for this path)
+
+❌ Violations (2):
+  Read .env  ← denied by files.read.deny
+  Ran: curl https://example.com  ← denied by commands.deny
+
+🔐 Sensitive files accessed (1):
+  Read .env  (event #12)
+```
+
+Exits with code 1 when violations are found — usable in CI.
+
+**Policy file** (`.agent-scope.json`):
+
+```json
+{
+  "files": {
+    "read":  { "allow": ["src/**", "tests/**"], "deny": [".env"] },
+    "write": { "allow": ["src/**"], "deny": [".github/**"] }
+  },
+  "commands": {
+    "allow": ["pytest", "uv run", "cat"],
+    "deny":  ["curl", "wget", "rm -rf"]
+  },
+  "network": { "deny_all": true, "allow": ["localhost"] }
+}
+```
+
+Glob patterns support `**` as a recursive wildcard. File read policy applies to `Read`, `View`, `Grep`, and `Glob` tool calls. Network policy checks URLs embedded in `Bash` commands.
+
 ## Production tracing (OTLP export)
 
 Export sessions as OpenTelemetry spans to your existing observability stack. Sessions become traces. Tool calls become spans with duration and inputs. Errors get exception events. Zero new dependencies.
@@ -526,6 +654,10 @@ src/agent_trace/
   jsonl_import.py   # Claude Code JSONL session import
   explain.py        # session phase detection and plain-English summary
   cost.py           # token and cost estimation
+  subagent.py       # parent-child session tree, tree replay, stats rollup
+  diff.py           # structural session comparison (LCS phase alignment)
+  why.py            # causal chain tracing (backwards event walk)
+  audit.py          # policy-based tool call checking, sensitive file detection
   cli.py            # CLI entry point
 ADRs/               # Architecture Decision Records
 ```
