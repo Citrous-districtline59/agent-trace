@@ -22,10 +22,12 @@ import time
 from . import __version__
 from .hooks import hook_main
 from .http_proxy import HTTPProxyServer
+from .audit import cmd_audit
 from .cost import cmd_cost
 from .diff import cmd_diff
 from .explain import cmd_explain
 from .jsonl_import import cmd_import
+from .why import cmd_why
 from .models import EventType, SessionMeta, TraceEvent
 from .proxy import MCPProxy
 from .replay import format_event, format_summary, list_sessions, replay_session
@@ -482,6 +484,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_cost.add_argument("--output-price", type=float, dest="output_price",
                         help="custom output price per 1M tokens (overrides --model)")
 
+    # audit
+    p_audit = sub.add_parser("audit", help="check session tool calls against a policy file")
+    p_audit.add_argument("session_id", nargs="?", help="session ID or prefix (default: latest)")
+    p_audit.add_argument("--policy", default=".agent-scope.json",
+                         help="path to policy file (default: .agent-scope.json)")
+
     return parser
 
 
@@ -515,6 +523,7 @@ def main() -> None:
         "cost": cmd_cost,
         "diff": cmd_diff,
         "why": cmd_why,
+        "audit": cmd_audit,
     }
 
     handler = handlers.get(args.command)
